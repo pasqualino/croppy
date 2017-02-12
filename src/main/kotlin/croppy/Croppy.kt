@@ -1,44 +1,38 @@
 package croppy
 
+import java.awt.Graphics2D
+import java.awt.GraphicsConfiguration
+import java.awt.GraphicsEnvironment
+import java.awt.RenderingHints.KEY_INTERPOLATION
+import java.awt.RenderingHints.VALUE_INTERPOLATION_BICUBIC
+import java.awt.geom.AffineTransform
 import java.awt.image.BufferedImage
 import java.io.File
+import java.lang.Math.*
 import java.util.*
 import javax.imageio.ImageIO
 
 
 class Croppy {
-    val STEP = 25
+    private val STEP = 25
+    private val LOG_2 = 0.6931471805599453
 
     fun thumb(image: BufferedImage, size: Int): BufferedImage {
-        val width = image.width
-        val height = image.height
-
-        val squareImage = when {
-            width < height -> squareTallImage(image)
-            width > height -> squareWideImage(image)
-            else -> image
+        return when {
+            image.width < image.height -> squareTallImage(resize(image, size, -1))
+            image.width > image.height -> squareWideImage(resize(image, -1, size))
+            else -> resize(image, size, size)
         }
-
-        return resize(squareImage, size)
-    }
-
-    private fun resize(original: BufferedImage, size: Int): BufferedImage {
-        println("Resizing thumbnail: $size px")
-        val scaledBI = BufferedImage(size, size, original.type)
-        val g = scaledBI.createGraphics()
-        g.drawImage(original, 0, 0, size, size, null)
-        g.dispose()
-        return scaledBI
     }
 
     private tailrec fun squareWideImage(image: BufferedImage): BufferedImage =
             if (image.height >= image.width) image
-            else squareWideImage(cropWide(image, Math.min(STEP, image.width - image.height)))
+            else squareWideImage(cropWide(image, min(STEP, image.width - image.height)))
 
 
     private tailrec fun squareTallImage(image: BufferedImage): BufferedImage =
             if (image.width >= image.height) image
-            else squareTallImage(cropTall(image, Math.min(STEP, image.height - image.width)))
+            else squareTallImage(cropTall(image, min(STEP, image.height - image.width)))
 
     private fun cropWide(image: BufferedImage, amount: Int): BufferedImage {
         println("Cropping $amount pixels")
@@ -69,7 +63,7 @@ class Croppy {
                 val red = pixel shr 16 and 0xff
                 val green = pixel shr 8 and 0xff
                 val blue = pixel and 0xff
-                val d = Math.round(0.2989 * red + 0.5870 * green + 0.1140 * blue).toInt()
+                val d = round(0.2989 * red + 0.5870 * green + 0.1140 * blue).toInt()
 
                 if (occ.containsKey(d)) {
                     occ.put(d, occ[d]?.plus(1) as Int)
@@ -80,16 +74,54 @@ class Croppy {
             }
         }
         var e = 0.0
-        for ((cx, value) in occ) {
+        for ((_, value) in occ) {
             val p = value.toDouble() / n
             e += p * log2(p)
         }
         return -e
     }
 
-    private fun log2(p: Double): Double = Math.log(p) / 0.6931471805599453
+    private fun log2(p: Double): Double = log(p) / LOG_2
 
+    private fun resize(original: BufferedImage, destWidth: Int, destHeight: Int): BufferedImage {
+        var width = destWidth
+        var height = destHeight
+        var xScale: Double = destWidth.toDouble() / original.width
+        var yScale: Double = destHeight.toDouble() / original.height
 
+        if (destWidth < 0) {
+            xScale = yScale
+            width = Math.rint(xScale * original.width).toInt()
+        }
+
+        if (destHeight < 0) {
+            yScale = xScale
+            height = Math.rint(yScale * original.height).toInt()
+        }
+
+        println("Resizing thumbnail: ${width}x$height px")
+
+        val gc = getDefaultConfiguration()
+        val result = gc.createCompatibleImage(width, height, original.colorModel.transparency)
+
+        var g2d: Graphics2D? = null
+        try {
+            g2d = result.createGraphics()
+            g2d.setRenderingHint(KEY_INTERPOLATION, VALUE_INTERPOLATION_BICUBIC)
+            val at = AffineTransform.getScaleInstance(xScale, yScale)
+            g2d.drawRenderedImage(original, at)
+        } finally {
+            g2d?.dispose()
+        }
+
+        return result
+    }
+
+    fun getDefaultConfiguration(): GraphicsConfiguration =
+            GraphicsEnvironment
+                    .getLocalGraphicsEnvironment()
+                    .defaultScreenDevice
+                    .defaultConfiguration
 }
 
 fun main(args: Array<String>) {
